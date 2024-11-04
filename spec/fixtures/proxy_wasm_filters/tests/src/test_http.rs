@@ -20,6 +20,11 @@ impl TestHttp {
         }
     }
 
+    fn set_prop(&self, ns: &str, prop: &str, value: Option<&str>) {
+        let value: Option<&[u8]> = value.map(|v| v.as_bytes());
+        self.set_property(vec![ns, prop], value);
+    }
+
     fn send_http_dispatch(&mut self, config: TestConfig) -> Action {
         let mut timeout = Duration::from_secs(0);
         let mut headers = Vec::new();
@@ -93,11 +98,14 @@ impl TestHttp {
         if cur_phase == on_phase {
             info!("[proxy-wasm] testing in \"{:?}\"", on_phase);
 
-            self.set_http_request_header(INPUT_HEADER_NAME, None);
-            self.set_http_request_header(TEST_HEADER_NAME, None);
-            self.set_http_request_header(PHASE_HEADER_NAME, None);
+            if cur_phase == TestPhase::RequestHeaders || cur_phase == TestPhase::RequestBody {
+                self.set_http_request_header(INPUT_HEADER_NAME, None);
+                self.set_http_request_header(TEST_HEADER_NAME, None);
+                self.set_http_request_header(PHASE_HEADER_NAME, None);
 
-            add_request_header(self);
+                add_request_header(self);
+            }
+
             add_response_header(self);
 
             if let Some(test) = opt_test {
@@ -111,6 +119,17 @@ impl TestHttp {
                         let value = self.get_prop("kong", name);
                         info!("[proxy-wasm] kong.{}: \"{:?}\"", name, value);
                         self.send_plain_response(StatusCode::OK, Some(&value))
+                    }
+                    "set_kong_property" => {
+                        if let Some(input) = opt_input {
+                            let (key, value) = match input.split_once('=') {
+                                Some((key, value)) => (key, Some(value)),
+                                None => (input.as_ref(), None),
+                            };
+
+                            self.set_prop("kong", key, value);
+                            info!("[proxy-wasm] kong.{} = \"{:?}\"", key, value);
+                        }
                     }
                     "echo_http_dispatch" => {
                         let config = TestConfig::from_str(&opt_input.unwrap_or("".to_string()))

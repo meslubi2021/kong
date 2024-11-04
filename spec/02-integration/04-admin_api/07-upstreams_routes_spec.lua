@@ -404,7 +404,7 @@ describe("Admin API: #" .. strategy, function()
             })
             body = assert.res_status(400, res)
             local json = cjson.decode(body)
-            assert.equals("bad cookie name 'not a <> valid <> cookie name', allowed characters are A-Z, a-z, 0-9, '_', and '-'",
+            assert.equals([[contains one or more invalid characters. ASCII control characters (0-31;127), space, tab and the characters ()<>@,;:\"/?={}[] are not allowed.]],
                           json.fields.hash_on_cookie)
 
             -- Invalid cookie path
@@ -437,7 +437,7 @@ describe("Admin API: #" .. strategy, function()
             })
             body = assert.res_status(400, res)
             local json = cjson.decode(body)
-            assert.equals("bad cookie name 'not a <> valid <> cookie name', allowed characters are A-Z, a-z, 0-9, '_', and '-'",
+            assert.equals([[contains one or more invalid characters. ASCII control characters (0-31;127), space, tab and the characters ()<>@,;:\"/?={}[] are not allowed.]],
                           json.fields.hash_on_cookie)
 
             -- Invalid cookie path in hash fallback
@@ -636,6 +636,16 @@ describe("Admin API: #" .. strategy, function()
           }
         })
         assert.res_status(200, res)
+      end)
+      it("returns bad request for empty tags", function()
+        local res = assert(client:send {
+          method = "GET",
+          path = "/upstreams",
+          query = { tags = ngx.null}
+        })
+        res = assert.res_status(400, res)
+        local json = cjson.decode(res)
+        assert.same("invalid option (tags: cannot be null)", json.message)
       end)
 
       describe("empty results", function()

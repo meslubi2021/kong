@@ -1,6 +1,6 @@
 local helpers = require "spec.helpers"
-local utils = require "kong.tools.utils"
 local cjson = require "cjson"
+local random_string = require("kong.tools.rand").random_string
 
 local file = helpers.file
 
@@ -24,7 +24,7 @@ local function post_config(client, config)
 end
 
 local function random_name()
-  return "test-" .. utils.random_string()
+  return "test-" .. random_string()
 end
 
 
@@ -457,8 +457,6 @@ describe("filter metadata [#off] yaml config", function()
                 append:
                   headers:
                   - x-response-transformer-2:TEST
-                rename: ~
-                remove: null
     ]]):format(helpers.mock_upstream_port))
 
     assert(helpers.start_kong({

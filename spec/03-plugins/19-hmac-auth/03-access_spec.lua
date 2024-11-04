@@ -1,14 +1,14 @@
 local cjson = require "cjson"
-local openssl_hmac = require "resty.openssl.hmac"
+local openssl_mac = require "resty.openssl.mac"
 local helpers = require "spec.helpers"
-local utils = require "kong.tools.utils"
+local uuid = require "kong.tools.uuid"
 local resty_sha256 = require "resty.sha256"
 
 local fmt = string.format
 
 
 local hmac_sha1_binary = function(secret, data)
-  return openssl_hmac.new(secret, "sha1"):final(data)
+  return openssl_mac.new(secret, "HMAC", nil, "sha1"):final(data)
 end
 
 
@@ -31,7 +31,7 @@ for _, strategy in helpers.each_strategy() do
       })
 
       local route1 = bp.routes:insert {
-        hosts = { "hmacauth.com" },
+        hosts = { "hmacauth.test" },
       }
 
       local route_grpc = assert(bp.routes:insert {
@@ -47,7 +47,8 @@ for _, strategy in helpers.each_strategy() do
         name     = "hmac-auth",
         route = { id = route1.id },
         config   = {
-          clock_skew = 3000
+          clock_skew = 3000,
+          realm = "test-realm"
         }
       }
 
@@ -75,7 +76,7 @@ for _, strategy in helpers.each_strategy() do
       }
 
       local route2 = bp.routes:insert {
-        hosts = { "hmacauth2.com" },
+        hosts = { "hmacauth2.test" },
       }
 
       bp.plugins:insert {
@@ -88,20 +89,20 @@ for _, strategy in helpers.each_strategy() do
       }
 
       local route3 = bp.routes:insert {
-        hosts = { "hmacauth3.com" },
+        hosts = { "hmacauth3.test" },
       }
 
       bp.plugins:insert {
         name     = "hmac-auth",
         route = { id = route3.id },
         config   = {
-          anonymous  = utils.uuid(),  -- non existing consumer
+          anonymous  = uuid.uuid(),  -- non existing consumer
           clock_skew = 3000
         }
       }
 
       local route4 = bp.routes:insert {
-        hosts = { "hmacauth4.com" },
+        hosts = { "hmacauth4.test" },
       }
 
       bp.plugins:insert {
@@ -114,7 +115,7 @@ for _, strategy in helpers.each_strategy() do
       }
 
       local route5 = bp.routes:insert {
-        hosts = { "hmacauth5.com" },
+        hosts = { "hmacauth5.test" },
       }
 
       bp.plugins:insert {
@@ -128,7 +129,7 @@ for _, strategy in helpers.each_strategy() do
       }
 
       local route6 = bp.routes:insert {
-        hosts = { "hmacauth6.com" },
+        hosts = { "hmacauth6.test" },
       }
 
       bp.plugins:insert {
@@ -143,7 +144,7 @@ for _, strategy in helpers.each_strategy() do
       }
 
       local route7 = bp.routes:insert {
-        hosts = { "hmacauth7.com" },
+        hosts = { "hmacauth7.test" },
       }
 
       bp.plugins:insert {
@@ -175,19 +176,40 @@ for _, strategy in helpers.each_strategy() do
     end)
 
     describe("HMAC Authentication", function()
-      it("should not be authorized when the hmac credentials are missing", function()
-        local date = os.date("!%a, %d %b %Y %H:%M:%S GMT")
-        local res = assert(proxy_client:send {
-          method = "POST",
-          body = {},
-          headers = {
-            ["HOST"] = "hmacauth.com",
-            date = date
-          }
-        })
-        local body = assert.res_status(401, res)
-        body = cjson.decode(body)
-        assert.equal("Unauthorized", body.message)
+      describe("when realm is set", function ()
+        it("should not be authorized when the hmac credentials are missing", function()
+          local date = os.date("!%a, %d %b %Y %H:%M:%S GMT")
+          local res = assert(proxy_client:send {
+            method = "POST",
+            body = {},
+            headers = {
+              ["HOST"] = "hmacauth.test",
+              date = date
+            }
+          })
+          local body = assert.res_status(401, res)
+          assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
+          body = cjson.decode(body)
+          assert.equal("Unauthorized", body.message)
+        end)
+      end)
+
+      describe("when realm is not set", function ()
+        it("should return a 401 with an invalid authorization header", function()
+          local date = os.date("!%a, %d %b %Y %H:%M:%S GMT")
+          local res = assert(proxy_client:send {
+            method  = "GET",
+            path    = "/request",
+            body    = {},
+            headers = {
+              ["HOST"]                = "hmacauth6.test",
+              date                    = date,
+              ["proxy-authorization"] = "this is no hmac token at all is it?",
+            },
+          })
+          assert.res_status(401, res)
+          assert.equal('hmac', res.headers["WWW-Authenticate"])
+        end)
       end)
 
       it("rejects gRPC call without credentials", function()
@@ -205,12 +227,13 @@ for _, strategy in helpers.each_strategy() do
           method = "POST",
           body = {},
           headers = {
-            ["HOST"] = "hmacauth.com",
+            ["HOST"] = "hmacauth.test",
             date = date,
             authorization = "asd"
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -222,12 +245,13 @@ for _, strategy in helpers.each_strategy() do
         local res  = assert(proxy_client:send {
           method          = "POST",
           headers         = {
-            ["HOST"]      = "hmacauth.com",
+            ["HOST"]      = "hmacauth.test",
             date          = date,
             authorization = hmacAuth
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal("HMAC signature does not match", body.message)
       end)
@@ -237,11 +261,12 @@ for _, strategy in helpers.each_strategy() do
           method = "POST",
           body = {},
           headers = {
-            ["HOST"] = "hmacauth.com",
+            ["HOST"] = "hmacauth.test",
             authorization = "asd"
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal([[HMAC signature cannot be verified, ]]
                     .. [[a valid date or x-date header is]]
@@ -254,12 +279,13 @@ for _, strategy in helpers.each_strategy() do
           method = "POST",
           body = {},
           headers = {
-            ["HOST"] = "hmacauth.com",
+            ["HOST"] = "hmacauth.test",
             date = date,
             ["proxy-authorization"] = "asd"
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -270,12 +296,13 @@ for _, strategy in helpers.each_strategy() do
           method = "POST",
           body = {},
           headers = {
-            ["HOST"] = "hmacauth.com",
+            ["HOST"] = "hmacauth.test",
             date = date,
             ["proxy-authorization"] = "hmac :dXNlcm5hbWU6cGFzc3dvcmQ="
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -286,13 +313,14 @@ for _, strategy in helpers.each_strategy() do
           method = "POST",
           body = {},
           headers = {
-            ["HOST"] = "hmacauth.com",
+            ["HOST"] = "hmacauth.test",
             date = date,
             ["proxy-authorization"] = [[hmac username=,algorithm,]]
               .. [[headers,dXNlcm5hbWU6cGFzc3dvcmQ=]]
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -303,13 +331,14 @@ for _, strategy in helpers.each_strategy() do
           method = "POST",
           body = {},
           headers = {
-            ["HOST"] = "hmacauth.com",
+            ["HOST"] = "hmacauth.test",
             date = date,
             authorization = [[hmac username=,algorithm,]]
               .. [[headers,dXNlcm5hbWU6cGFzc3dvcmQ=]]
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -320,12 +349,13 @@ for _, strategy in helpers.each_strategy() do
           method = "POST",
           body = {},
           headers = {
-            ["HOST"] = "hmacauth.com",
+            ["HOST"] = "hmacauth.test",
             date = date,
             authorization = "hmac username"
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -336,11 +366,12 @@ for _, strategy in helpers.each_strategy() do
           method = "POST",
           body = {},
           headers = {
-            ["HOST"] = "hmacauth.com",
+            ["HOST"] = "hmacauth.test",
             date = date,
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal("Unauthorized", body.message)
       end)
@@ -355,12 +386,13 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]      = "hmacauth.com",
+            ["HOST"]      = "hmacauth.test",
             date          = date,
             authorization = hmacAuth,
           },
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.not_nil(body.message)
         assert.matches("HMAC signature cannot be verified", body.message)
@@ -375,12 +407,13 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]      = "hmacauth.com",
+            ["HOST"]      = "hmacauth.test",
             date          = date,
             authorization = hmacAuth,
           },
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.not_nil(body.message)
         assert.matches("HMAC signature cannot be verified", body.message)
@@ -396,7 +429,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]      = "hmacauth.com",
+            ["HOST"]      = "hmacauth.test",
             date          = date,
             authorization = hmacAuth,
           },
@@ -450,7 +483,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
           },
@@ -468,7 +501,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]      = "hmacauth.com",
+            ["HOST"]      = "hmacauth.test",
             date          = date,
             authorization = hmacAuth,
           },
@@ -488,7 +521,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = "hmac username",
             authorization           = hmacAuth,
@@ -510,7 +543,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -530,7 +563,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -553,7 +586,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -576,7 +609,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -600,7 +633,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -624,7 +657,7 @@ for _, strategy in helpers.each_strategy() do
               path    = "/request",
               body    = {},
               headers = {
-                ["HOST"]                = "hmacauth.com",
+                ["HOST"]                = "hmacauth.test",
                 date                    = date,
                 ["proxy-authorization"] = hmacAuth,
                 authorization           = "hello",
@@ -633,6 +666,7 @@ for _, strategy in helpers.each_strategy() do
             })
 
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -650,7 +684,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -659,6 +693,7 @@ for _, strategy in helpers.each_strategy() do
         })
 
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -677,7 +712,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -686,6 +721,7 @@ for _, strategy in helpers.each_strategy() do
         })
 
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -703,7 +739,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -711,6 +747,7 @@ for _, strategy in helpers.each_strategy() do
           },
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -728,7 +765,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -736,6 +773,7 @@ for _, strategy in helpers.each_strategy() do
           },
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -753,7 +791,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -761,6 +799,7 @@ for _, strategy in helpers.each_strategy() do
           },
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -778,7 +817,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers                   = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -786,6 +825,7 @@ for _, strategy in helpers.each_strategy() do
           },
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal(SIGNATURE_NOT_VALID, body.message)
       end)
@@ -803,7 +843,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -816,7 +856,7 @@ for _, strategy in helpers.each_strategy() do
       it("should not pass with GET with wrong algorithm", function()
         local date = os.date("!%a, %d %b %Y %H:%M:%S GMT")
         local encodedSignature = ngx.encode_base64(
-          openssl_hmac.new("secret", "sha256"):final("date: " .. date .. "\n"
+          openssl_mac.new("secret", "HMAC", nil, "sha256"):final("date: " .. date .. "\n"
             .. "content-md5: md5" .. "\nGET /request HTTP/1.1"))
         local hmacAuth = [[hmac username="bob",algorithm="hmac-sha",]]
           .. [[  headers="date content-md5 request-line",signature="]]
@@ -826,7 +866,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -834,12 +874,13 @@ for _, strategy in helpers.each_strategy() do
           },
         })
         assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
       end)
 
       it("should pass the right headers to the upstream server", function()
         local date = os.date("!%a, %d %b %Y %H:%M:%S GMT")
         local encodedSignature = ngx.encode_base64(
-          openssl_hmac.new("secret", "sha256"):final("date: " .. date .. "\n"
+          openssl_mac.new("secret", "HMAC", nil, "sha256"):final("date: " .. date .. "\n"
                              .. "content-md5: md5" .. "\nGET /request HTTP/1.1"))
         local hmacAuth = [[hmac username="bob",algorithm="hmac-sha256",]]
           .. [[  headers="date content-md5 request-line",signature="]]
@@ -849,7 +890,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
@@ -877,7 +918,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]        = "hmacauth.com",
+            ["HOST"]        = "hmacauth.test",
             ["x-date"]      = date,
             authorization   = hmacAuth,
             ["content-md5"] = "md5",
@@ -898,13 +939,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth.com",
+            ["HOST"]                = "hmacauth.test",
             ["proxy-authorization"] = hmacAuth,
             authorization           = "hello",
             ["content-md5"]         = "md5",
           },
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal([[HMAC signature cannot be verified, a valid date or]]
           .. [[ x-date header is required for HMAC Authentication]], body.message)
@@ -923,13 +965,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]        = "hmacauth.com",
+            ["HOST"]        = "hmacauth.test",
             ["x-date"]      = "wrong date",
             authorization   = hmacAuth,
             ["content-md5"] = "md5",
           },
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac realm="test-realm"', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal([[HMAC signature cannot be verified, a valid date or]]
           .. [[ x-date header is required for HMAC Authentication]], body.message)
@@ -948,7 +991,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]        = "hmacauth.com",
+            ["HOST"]        = "hmacauth.test",
             ["x-date"]      = "wrong date",
             date            = date,
             authorization   = hmacAuth,
@@ -971,7 +1014,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]        = "hmacauth.com",
+            ["HOST"]        = "hmacauth.test",
             ["x-date"]      = "wrong date",
             date            = date,
             authorization   = hmacAuth,
@@ -994,7 +1037,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]        = "hmacauth.com",
+            ["HOST"]        = "hmacauth.test",
             ["x-date"]      = "wrong date",
             date            = date,
             authorization   = hmacAuth,
@@ -1017,7 +1060,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]        = "hmacauth.com",
+            ["HOST"]        = "hmacauth.test",
             ["x-date"]      = date,
             date            = "wrong date",
             authorization   = hmacAuth,
@@ -1037,7 +1080,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]      = "hmacauth2.com",
+            ["HOST"]      = "hmacauth2.test",
             date          = date,
             authorization = hmacAuth,
           },
@@ -1065,12 +1108,13 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = postBody,
           headers = {
-            ["HOST"]      = "hmacauth4.com",
+            ["HOST"]      = "hmacauth4.test",
             date          = date,
             authorization = hmacAuth,
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal("HMAC signature does not match", body.message)
       end)
@@ -1086,7 +1130,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["HOST"]      = "hmacauth4.com",
+            ["HOST"]      = "hmacauth4.test",
             date          = date,
             authorization = hmacAuth,
           }
@@ -1108,7 +1152,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["HOST"]      = "hmacauth4.com",
+            ["HOST"]      = "hmacauth4.test",
             date          = date,
             digest        = digest,
             authorization = hmacAuth,
@@ -1123,7 +1167,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"] = "hmacauth2.com",
+            ["HOST"] = "hmacauth2.test",
           },
         })
         local body = assert.res_status(200, res)
@@ -1139,7 +1183,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"] = "hmacauth7.com",
+            ["HOST"] = "hmacauth7.test",
           },
         })
         local body = assert.res_status(200, res)
@@ -1157,7 +1201,7 @@ for _, strategy in helpers.each_strategy() do
           method = "GET",
           path    = "/request",
           headers = {
-            ["Host"] = "hmacauth3.com",
+            ["Host"] = "hmacauth3.test",
           },
         })
         assert.response(res).has.status(500)
@@ -1173,7 +1217,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]      = "hmacauth4.com",
+            ["HOST"]      = "hmacauth4.test",
             date          = date,
             authorization = hmacAuth,
           },
@@ -1197,7 +1241,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = postBody,
           headers = {
-            ["HOST"]      = "hmacauth4.com",
+            ["HOST"]      = "hmacauth4.test",
             date          = date,
             digest        = digest,
             authorization = hmacAuth,
@@ -1222,7 +1266,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = postBody,
           headers = {
-            ["HOST"]      = "hmacauth4.com",
+            ["HOST"]      = "hmacauth4.test",
             date          = date,
             digest        = digest,
             authorization = hmacAuth,
@@ -1247,12 +1291,13 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = postBody,
           headers = {
-            ["HOST"]      = "hmacauth4.com",
+            ["HOST"]      = "hmacauth4.test",
             date          = date,
             authorization = hmacAuth,
           },
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal("HMAC signature does not match", body.message)
       end)
@@ -1273,13 +1318,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = "abc",
           headers = {
-            ["HOST"]      = "hmacauth4.com",
+            ["HOST"]      = "hmacauth4.test",
             date          = date,
             digest        = digest,
             authorization = hmacAuth,
           },
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal("HMAC signature does not match", body.message)
       end)
@@ -1300,13 +1346,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = postBody,
           headers = {
-            ["HOST"]      = "hmacauth4.com",
+            ["HOST"]      = "hmacauth4.test",
             date          = date,
             digest        = digest .. "spoofed",
             authorization = hmacAuth,
           }
         })
         local body = assert.res_status(401, res)
+        assert.equal('hmac', res.headers["WWW-Authenticate"])
         body = cjson.decode(body)
         assert.equal("HMAC signature does not match", body.message)
       end)
@@ -1324,7 +1371,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1347,13 +1394,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request?name=foo",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
           },
         })
         assert.res_status(401, res)
+        assert.equal('hmac', res.headers["WWW-Authenticate"])
 
         encodedSignature = ngx.encode_base64(
           hmac_sha1_binary("secret", "date: "
@@ -1366,13 +1414,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request/?name=foo",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
           },
         })
         assert.res_status(401, res)
+        assert.equal('hmac', res.headers["WWW-Authenticate"])
       end)
 
       it("should pass with GET with request-line having query param", function()
@@ -1388,7 +1437,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request?name=foo",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1407,7 +1456,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request/?name=foo",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1431,7 +1480,7 @@ for _, strategy in helpers.each_strategy() do
           path    = escaped_uri,
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1454,7 +1503,7 @@ for _, strategy in helpers.each_strategy() do
           path    = escaped_uri,
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1481,7 +1530,7 @@ for _, strategy in helpers.each_strategy() do
           path    = escaped_uri,
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1506,7 +1555,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request?name=foo&name=bar",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1530,7 +1579,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1554,7 +1603,7 @@ for _, strategy in helpers.each_strategy() do
           path    = escaped_uri,
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1580,19 +1629,20 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
           },
         })
         assert.res_status(401, res)
+        assert.equal('hmac', res.headers["WWW-Authenticate"])
       end)
 
       it("should pass with GET with hmac-sha384", function()
         local date = os.date("!%a, %d %b %Y %H:%M:%S GMT")
         local encodedSignature = ngx.encode_base64(
-          openssl_hmac.new("secret", "sha384"):final("date: " .. date .. "\n"
+          openssl_mac.new("secret", "HMAC", nil, "sha384"):final("date: " .. date .. "\n"
                   .. "content-md5: md5" .. "\nGET /request HTTP/1.1"))
         local hmacAuth = [[hmac username="bob",  algorithm="hmac-sha384", ]]
                 .. [[headers="date content-md5 request-line", signature="]]
@@ -1602,7 +1652,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1614,7 +1664,7 @@ for _, strategy in helpers.each_strategy() do
       it("should pass with GET with hmac-sha512", function()
         local date = os.date("!%a, %d %b %Y %H:%M:%S GMT")
         local encodedSignature = ngx.encode_base64(
-          openssl_hmac.new("secret", "sha512"):final("date: " .. date .. "\n"
+          openssl_mac.new("secret", "HMAC", nil, "sha512"):final("date: " .. date .. "\n"
                   .. "content-md5: md5" .. "\nGET /request HTTP/1.1"))
         local hmacAuth = [[hmac username="bob",  algorithm="hmac-sha512", ]]
                 .. [[headers="date content-md5 request-line", signature="]]
@@ -1624,7 +1674,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth5.com",
+            ["HOST"]                = "hmacauth5.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1636,7 +1686,7 @@ for _, strategy in helpers.each_strategy() do
       it("should not pass with hmac-sha512", function()
         local date = os.date("!%a, %d %b %Y %H:%M:%S GMT")
         local encodedSignature = ngx.encode_base64(
-          openssl_hmac.new("secret", "sha512"):final("date: " .. date .. "\n"
+          openssl_mac.new("secret", "HMAC", nil, "sha512"):final("date: " .. date .. "\n"
                   .. "content-md5: md5" .. "\nGET /request HTTP/1.1"))
         local hmacAuth = [[hmac username="bob",  algorithm="hmac-sha512", ]]
                 .. [[headers="date content-md5 request-line", signature="]]
@@ -1646,13 +1696,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth6.com",
+            ["HOST"]                = "hmacauth6.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
           },
         })
         assert.res_status(401, res)
+        assert.equal('hmac', res.headers["WWW-Authenticate"])
       end)
 
       it("should return a 401 with an invalid authorization header", function()
@@ -1662,18 +1713,19 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth6.com",
+            ["HOST"]                = "hmacauth6.test",
             date                    = date,
             ["proxy-authorization"] = "this is no hmac token at all is it?",
           },
         })
         assert.res_status(401, res)
+        assert.equal('hmac', res.headers["WWW-Authenticate"])
       end)
 
       it("should pass with hmac-sha1", function()
         local date = os.date("!%a, %d %b %Y %H:%M:%S GMT")
         local encodedSignature = ngx.encode_base64(
-          openssl_hmac.new("secret", "sha1"):final("date: " .. date .. "\n"
+          openssl_mac.new("secret", "HMAC", nil, "sha1"):final("date: " .. date .. "\n"
                   .. "content-md5: md5" .. "\nGET /request HTTP/1.1"))
         local hmacAuth = [[hmac username="bob",  algorithm="hmac-sha1", ]]
                 .. [[headers="date content-md5 request-line", signature="]]
@@ -1683,7 +1735,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           body    = {},
           headers = {
-            ["HOST"]                = "hmacauth6.com",
+            ["HOST"]                = "hmacauth6.test",
             date                    = date,
             ["proxy-authorization"] = hmacAuth,
             ["content-md5"]         = "md5",
@@ -1718,7 +1770,7 @@ for _, strategy in helpers.each_strategy() do
       })
 
       local route1 = bp.routes:insert {
-        hosts      = { "logical-and.com" },
+        hosts      = { "logical-and.test" },
         protocols  = { "http", "https" },
         service    = service1
       }
@@ -1750,7 +1802,7 @@ for _, strategy in helpers.each_strategy() do
       })
 
       local route2 = bp.routes:insert {
-        hosts      = { "logical-or.com" },
+        hosts      = { "logical-or.test" },
         protocols  = { "http", "https" },
         service    = service2
       }
@@ -1807,7 +1859,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]          = "logical-and.com",
+            ["Host"]          = "logical-and.test",
             ["apikey"]        = "Mouse",
             ["Authorization"] = hmacAuth,
             ["date"]          = hmacDate,
@@ -1826,11 +1878,12 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]   = "logical-and.com",
+            ["Host"]   = "logical-and.test",
             ["apikey"] = "Mouse",
           },
         })
         assert.response(res).has.status(401)
+        assert.equal('hmac', res.headers["WWW-Authenticate"])
       end)
 
       it("fails 401, with only the second credential provided", function()
@@ -1838,12 +1891,13 @@ for _, strategy in helpers.each_strategy() do
           method = "GET",
           path   = "/request",
           headers = {
-            ["Host"]          = "logical-and.com",
+            ["Host"]          = "logical-and.test",
             ["Authorization"] = hmacAuth,
             ["date"]          = hmacDate,
           },
         })
         assert.response(res).has.status(401)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
 
       it("fails 401, with no credential provided", function()
@@ -1851,10 +1905,11 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"] = "logical-and.com",
+            ["Host"] = "logical-and.test",
           },
         })
         assert.response(res).has.status(401)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
 
     end)
@@ -1866,7 +1921,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]          = "logical-or.com",
+            ["Host"]          = "logical-or.test",
             ["apikey"]        = "Mouse",
             ["Authorization"] = hmacAuth,
             ["date"]          = hmacDate,
@@ -1885,7 +1940,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]   = "logical-or.com",
+            ["Host"]   = "logical-or.test",
             ["apikey"] = "Mouse",
           },
         })
@@ -1901,7 +1956,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]          = "logical-or.com",
+            ["Host"]          = "logical-or.test",
             ["Authorization"] = hmacAuth,
             ["date"]          = hmacDate,
           },
@@ -1918,7 +1973,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"] = "logical-or.com",
+            ["Host"] = "logical-or.test",
           },
         })
         assert.response(res).has.status(200)

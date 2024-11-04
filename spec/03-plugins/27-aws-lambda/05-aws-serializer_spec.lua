@@ -1,5 +1,5 @@
-local utils = require "kong.tools.utils"
 local date = require "date"
+local cycle_aware_deep_copy = require("kong.tools.table").cycle_aware_deep_copy
 
 describe("[AWS Lambda] aws-gateway input", function()
 
@@ -10,7 +10,7 @@ describe("[AWS Lambda] aws-gateway input", function()
 
   local function reload_module()
     -- make sure to reload the module
-    package.loaded["kong.tracing.request_id"] = nil
+    package.loaded["kong.observability.tracing.request_id"] = nil
     package.loaded["kong.plugins.aws-lambda.request-util"] = nil
     aws_serialize = require "kong.plugins.aws-lambda.request-util".aws_serializer
   end
@@ -21,8 +21,8 @@ describe("[AWS Lambda] aws-gateway input", function()
     local body_data
     _G.ngx = setmetatable({
       req = {
-        get_headers = function() return utils.cycle_aware_deep_copy(mock_request.headers) end,
-        get_uri_args = function() return utils.cycle_aware_deep_copy(mock_request.query) end,
+        get_headers = function() return cycle_aware_deep_copy(mock_request.headers) end,
+        get_uri_args = function() return cycle_aware_deep_copy(mock_request.query) end,
         read_body = function() body_data = mock_request.body end,
         get_body_data = function() return body_data end,
         http_version = function() return mock_request.http_version end,
@@ -68,7 +68,7 @@ describe("[AWS Lambda] aws-gateway input", function()
         request_method = "GET",
         upstream_uri = "/123/strip/more?boolean=;multi-query=first;single-query=hello%20world;multi-query=second",
         kong_request_id = "1234567890",
-        host = "abc.myhost.com",
+        host = "abc.myhost.test",
         remote_addr = "123.123.123.123"
       },
       ctx = {
@@ -88,6 +88,7 @@ describe("[AWS Lambda] aws-gateway input", function()
     local out = aws_serialize()
 
     assert.same({
+        version = "1.0",
         httpMethod = "GET",
         path = "/123/strip/more",
         resource = "/(?<version>\\d+)/strip",
@@ -120,7 +121,7 @@ describe("[AWS Lambda] aws-gateway input", function()
           path = "/123/strip/more",
           protocol = "HTTP/1.1",
           httpMethod = "GET",
-          domainName = "abc.myhost.com",
+          domainName = "abc.myhost.test",
           domainPrefix = "abc",
           identity = { sourceIp = "123.123.123.123", userAgent = "curl/7.54.0" },
           requestId = "1234567890",
@@ -150,7 +151,7 @@ describe("[AWS Lambda] aws-gateway input", function()
         request_method = "GET",
         upstream_uri = "/plain/strip/more?boolean=;multi-query=first;single-query=hello%20world;multi-query=second",
         kong_request_id = "1234567890",
-        host = "def.myhost.com",
+        host = "def.myhost.test",
         remote_addr = "123.123.123.123"
       },
       ctx = {
@@ -165,6 +166,7 @@ describe("[AWS Lambda] aws-gateway input", function()
     local out = aws_serialize()
 
     assert.same({
+        version = "1.0",
         httpMethod = "GET",
         path = "/plain/strip/more",
         resource = "/plain/strip",
@@ -195,7 +197,7 @@ describe("[AWS Lambda] aws-gateway input", function()
           path = "/plain/strip/more",
           protocol = "HTTP/1.0",
           httpMethod = "GET",
-          domainName = "def.myhost.com",
+          domainName = "def.myhost.test",
           domainPrefix = "def",
           identity = { sourceIp = "123.123.123.123", userAgent = "curl/7.54.0" },
           requestId = "1234567890",
@@ -247,7 +249,7 @@ describe("[AWS Lambda] aws-gateway input", function()
             upstream_uri = "/plain/strip/more",
             http_content_type = tdata.ct,
             kong_request_id = "1234567890",
-            host = "def.myhost.com",
+            host = "def.myhost.test",
             remote_addr = "123.123.123.123"
           },
           ctx = {
@@ -262,6 +264,7 @@ describe("[AWS Lambda] aws-gateway input", function()
         local out = aws_serialize()
 
         assert.same({
+          version = "1.0",
           body = tdata.body_out,
           headers = {
             ["Content-Type"] = tdata.ct,
@@ -282,7 +285,7 @@ describe("[AWS Lambda] aws-gateway input", function()
             path = "/plain/strip/more",
             protocol = "HTTP/1.0",
             httpMethod = "GET",
-            domainName = "def.myhost.com",
+            domainName = "def.myhost.test",
             domainPrefix = "def",
             identity = { sourceIp = "123.123.123.123", userAgent = "curl/7.54.0" },
             requestId = "1234567890",

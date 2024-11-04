@@ -1,6 +1,6 @@
 local resty_lock = require "resty.lock"
 local ngx_semaphore = require "ngx.semaphore"
-local in_yieldable_phase = require("kong.tools.utils").in_yieldable_phase
+local in_yieldable_phase = require("kong.tools.yield").in_yieldable_phase
 
 
 local type  = type
@@ -51,7 +51,8 @@ function concurrency.with_worker_mutex(opts, fn)
   local elapsed, err = rlock:lock(opts_name)
   if not elapsed then
     if err == "timeout" then
-      return nil, err
+      local ttl = rlock.dict and rlock.dict:ttl(opts_name)
+      return nil, err, ttl
     end
     return nil, "failed to acquire worker lock: " .. err
   end

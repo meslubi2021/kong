@@ -117,9 +117,24 @@ local function export_from_db_impl(emitter, skip_ws, skip_disabled_entities, exp
     return nil, err
   end
 
+  local sync_version
+  if emitter.want_sync_version then
+    ok, err = db.connector:query("SELECT max(version) from clustering_sync_version", "read")
+    if not ok then
+      return nil, err
+    end
+
+    -- it will be ngx.null when the table clustering_sync_version is empty
+    sync_version = assert(ok[1].max)
+    if sync_version == null then
+      sync_version = 0
+    end
+  end
+
   emitter:emit_toplevel({
     _format_version = "3.0",
     _transform = false,
+    _sync_version = sync_version, -- only used by sync emitter, DP doesn't care about this
   })
 
   local disabled_services = {}
@@ -339,6 +354,35 @@ local function sanitize_output(entities)
 end
 
 
+local sync_emitter = {
+  emit_toplevel = function(self, tbl)
+    self.out = {}
+    self.out_n = 0
+    self.sync_version = tbl._sync_version
+  end,
+
+  emit_entity = function(self, entity_name, entity_data)
+    self.out_n = self.out_n + 1
+    self.out[self.out_n] = { type = entity_name , entity = entity_data, version = self.sync_version,
+                             ws_id = kong.default_workspace, }
+  end,
+
+  done = function(self)
+    return self.out
+  end,
+}
+
+
+function sync_emitter.new()
+  return setmetatable({ want_sync_version = true, }, { __index = sync_emitter })
+end
+
+
+local function export_config_sync()
+  return export_from_db_impl(sync_emitter.new(), false, false, true)
+end
+
+
 return {
   convert_nulls = convert_nulls,
   to_yaml_string = to_yaml_string,
@@ -347,6 +391,7 @@ return {
   export_from_db = export_from_db,
   export_config = export_config,
   export_config_proto = export_config_proto,
+  export_config_sync = export_config_sync,
 
   sanitize_output = sanitize_output,
 }

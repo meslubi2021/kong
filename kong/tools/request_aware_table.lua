@@ -3,39 +3,32 @@
 
 local table_new = require("table.new")
 local table_clear = require("table.clear")
-local get_request_id = require("kong.tracing.request_id").get
+local get_request_id = require("kong.observability.tracing.request_id").get
 
-local is_not_debug_mode = (kong.configuration.log_level ~= "debug")
+
+-- set in new()
+local is_not_debug_mode
 
 
 local error        = error
 local rawset       = rawset
+local rawget       = rawget
 local setmetatable = setmetatable
-local get_phase    = ngx.get_phase
 
 
-local NGX_VAR_PHASES = {
-  set           = true,
-  rewrite       = true,
-  access        = true,
-  content       = true,
-  header_filter = true,
-  body_filter   = true,
-  log           = true,
-  balancer      = true,
-}
 local ALLOWED_REQUEST_ID_K = "__allowed_request_id"
 
 
 -- Check if access is allowed for table, based on the request ID
 local function enforce_sequential_access(table)
-  if not NGX_VAR_PHASES[get_phase()] then
+  local curr_request_id = get_request_id()
+
+  if not curr_request_id then
     -- allow access and reset allowed request ID
     rawset(table, ALLOWED_REQUEST_ID_K, nil)
     return
   end
 
-  local curr_request_id = get_request_id()
   local allowed_request_id = rawget(table, ALLOWED_REQUEST_ID_K)
   if not allowed_request_id then
     -- first access. Set allowed request ID and allow access
@@ -107,6 +100,10 @@ local __direct_mt = {
 -- @return The newly created table with request-aware access
 local function new(narr, nrec)
   local data = table_new(narr or 0, nrec or 0)
+
+  if is_not_debug_mode == nil then
+    is_not_debug_mode = (kong.configuration.log_level ~= "debug")
+  end
 
   -- return table without proxy when debug_mode is disabled
   if is_not_debug_mode then

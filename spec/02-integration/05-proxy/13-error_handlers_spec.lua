@@ -12,7 +12,7 @@ describe("Proxy error handlers", function()
   end)
 
   lazy_teardown(function()
-    helpers.stop_kong(nil, true)
+    helpers.stop_kong()
   end)
 
   before_each(function()
@@ -36,7 +36,7 @@ describe("Proxy error handlers", function()
     assert.res_status(400, res)
     local body = res:read_body()
     assert.matches("kong/", res.headers.server, nil, true)
-    assert.matches("Bad request\nrequest_id: %x+\n", body)
+    assert.matches("Request header or cookie too large", body)
   end)
 
   it("Request For Routers With Trace Method Not Allowed", function ()

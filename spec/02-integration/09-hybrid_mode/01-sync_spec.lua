@@ -1,19 +1,22 @@
 local helpers = require "spec.helpers"
-local utils = require "kong.tools.utils"
 local cjson = require "cjson.safe"
 local _VERSION_TABLE = require "kong.meta" ._VERSION_TABLE
 local MAJOR = _VERSION_TABLE.major
 local MINOR = _VERSION_TABLE.minor
 local PATCH = _VERSION_TABLE.patch
 local CLUSTERING_SYNC_STATUS = require("kong.constants").CLUSTERING_SYNC_STATUS
+local cycle_aware_deep_copy = require("kong.tools.table").cycle_aware_deep_copy
+local uuid = require("kong.tools.uuid").uuid
 
 
 local KEY_AUTH_PLUGIN
 
 
+--- XXX FIXME: enable inc_sync = on
+for _, inc_sync in ipairs { "off"  } do
 for _, strategy in helpers.each_strategy() do
 
-describe("CP/DP communication #" .. strategy, function()
+describe("CP/DP communication #" .. strategy .. " inc_sync=" .. inc_sync, function()
 
   lazy_setup(function()
     helpers.get_db_utils(strategy) -- runs migrations
@@ -26,6 +29,7 @@ describe("CP/DP communication #" .. strategy, function()
       db_update_frequency = 0.1,
       cluster_listen = "127.0.0.1:9005",
       nginx_conf = "spec/fixtures/custom_nginx.template",
+      cluster_incremental_sync = inc_sync,
     }))
 
     assert(helpers.start_kong({
@@ -37,6 +41,7 @@ describe("CP/DP communication #" .. strategy, function()
       cluster_control_plane = "127.0.0.1:9005",
       proxy_listen = "0.0.0.0:9002",
       nginx_conf = "spec/fixtures/custom_nginx.template",
+      cluster_incremental_sync = inc_sync,
     }))
 
     for _, plugin in ipairs(helpers.get_plugins_list()) do
@@ -68,7 +73,6 @@ describe("CP/DP communication #" .. strategy, function()
           if v.ip == "127.0.0.1" then
             assert.near(14 * 86400, v.ttl, 3)
             assert.matches("^(%d+%.%d+)%.%d+", v.version)
-            assert.equal(CLUSTERING_SYNC_STATUS.NORMAL, v.sync_status)
             assert.equal(CLUSTERING_SYNC_STATUS.NORMAL, v.sync_status)
             return true
           end
@@ -263,7 +267,13 @@ describe("CP/DP communication #" .. strategy, function()
         method  = "GET",
         path    = "/soon-to-be-disabled",
       }))
-      assert.res_status(404, res)
+
+      if inc_sync == "on" then
+        -- XXX incremental sync does not skip_disabled_services by default
+        assert.res_status(200, res)
+      else
+        assert.res_status(404, res)
+      end
 
       proxy_client:close()
     end)
@@ -357,6 +367,7 @@ describe("CP/DP #version check #" .. strategy, function()
         cluster_listen = "127.0.0.1:9005",
         nginx_conf = "spec/fixtures/custom_nginx.template",
         cluster_version_check = "major_minor",
+        cluster_incremental_sync = inc_sync,
       }))
 
       for _, plugin in ipairs(helpers.get_plugins_list()) do
@@ -373,7 +384,7 @@ describe("CP/DP #version check #" .. strategy, function()
 
     local plugins_map = {}
     -- generate a map of current plugins
-    local plugin_list = utils.cycle_aware_deep_copy(helpers.get_plugins_list())
+    local plugin_list = cycle_aware_deep_copy(helpers.get_plugins_list())
     for _, plugin in pairs(plugin_list) do
       plugins_map[plugin.name] = plugin.version
     end
@@ -427,7 +438,7 @@ describe("CP/DP #version check #" .. strategy, function()
       },
     }
 
-    local pl1 = utils.cycle_aware_deep_copy(helpers.get_plugins_list())
+    local pl1 = cycle_aware_deep_copy(helpers.get_plugins_list())
     table.insert(pl1, 2, { name = "banana", version = "1.1.1" })
     table.insert(pl1, { name = "pineapple", version = "1.1.2" })
     allowed_cases["DP plugin set is a superset of CP"] = {
@@ -439,7 +450,7 @@ describe("CP/DP #version check #" .. strategy, function()
       plugins_list = { KEY_AUTH_PLUGIN }
     }
 
-    local pl2 = utils.cycle_aware_deep_copy(helpers.get_plugins_list())
+    local pl2 = cycle_aware_deep_copy(helpers.get_plugins_list())
     for i, _ in ipairs(pl2) do
       local v = pl2[i].version
       local minor = v and v:match("%d+%.(%d+)%.%d+")
@@ -459,7 +470,7 @@ describe("CP/DP #version check #" .. strategy, function()
       plugins_list = pl2
     }
 
-    local pl3 = utils.cycle_aware_deep_copy(helpers.get_plugins_list())
+    local pl3 = cycle_aware_deep_copy(helpers.get_plugins_list())
     for i, _ in ipairs(pl3) do
       local v = pl3[i].version
       local patch = v and v:match("%d+%.%d+%.(%d+)")
@@ -480,7 +491,7 @@ describe("CP/DP #version check #" .. strategy, function()
 
     for desc, harness in pairs(allowed_cases) do
       it(desc .. ", sync is allowed", function()
-        local uuid = utils.uuid()
+        local uuid = uuid()
 
         local res = assert(helpers.clustering_client({
           host = "127.0.0.1",
@@ -567,7 +578,7 @@ describe("CP/DP #version check #" .. strategy, function()
 
     for desc, harness in pairs(blocked_cases) do
       it(desc ..", sync is blocked", function()
-        local uuid = utils.uuid()
+        local uuid = uuid()
 
         local res, err = helpers.clustering_client({
           host = "127.0.0.1",
@@ -624,6 +635,7 @@ describe("CP/DP config sync #" .. strategy, function()
       database = strategy,
       db_update_frequency = 3,
       cluster_listen = "127.0.0.1:9005",
+      cluster_incremental_sync = inc_sync,
     }))
 
     assert(helpers.start_kong({
@@ -634,6 +646,7 @@ describe("CP/DP config sync #" .. strategy, function()
       cluster_cert_key = "spec/fixtures/kong_clustering.key",
       cluster_control_plane = "127.0.0.1:9005",
       proxy_listen = "0.0.0.0:9002",
+      cluster_incremental_sync = inc_sync,
     }))
   end)
 
@@ -736,6 +749,7 @@ describe("CP/DP labels #" .. strategy, function()
       db_update_frequency = 0.1,
       cluster_listen = "127.0.0.1:9005",
       nginx_conf = "spec/fixtures/custom_nginx.template",
+      cluster_incremental_sync = inc_sync,
     }))
 
     assert(helpers.start_kong({
@@ -748,6 +762,7 @@ describe("CP/DP labels #" .. strategy, function()
       proxy_listen = "0.0.0.0:9002",
       nginx_conf = "spec/fixtures/custom_nginx.template",
       cluster_dp_labels="deployment:mycloud,region:us-east-1",
+      cluster_incremental_sync = inc_sync,
     }))
   end)
 
@@ -784,4 +799,125 @@ describe("CP/DP labels #" .. strategy, function()
   end)
 end)
 
-end
+describe("CP/DP cert details(cluster_mtls = shared) #" .. strategy, function()
+  lazy_setup(function()
+    helpers.get_db_utils(strategy) -- runs migrations
+
+    assert(helpers.start_kong({
+      role = "control_plane",
+      cluster_cert = "spec/fixtures/kong_clustering.crt",
+      cluster_cert_key = "spec/fixtures/kong_clustering.key",
+      database = strategy,
+      db_update_frequency = 0.1,
+      cluster_listen = "127.0.0.1:9005",
+      nginx_conf = "spec/fixtures/custom_nginx.template",
+      cluster_incremental_sync = inc_sync,
+    }))
+
+    assert(helpers.start_kong({
+      role = "data_plane",
+      database = "off",
+      prefix = "servroot2",
+      cluster_cert = "spec/fixtures/kong_clustering.crt",
+      cluster_cert_key = "spec/fixtures/kong_clustering.key",
+      cluster_control_plane = "127.0.0.1:9005",
+      proxy_listen = "0.0.0.0:9002",
+      nginx_conf = "spec/fixtures/custom_nginx.template",
+      cluster_dp_labels="deployment:mycloud,region:us-east-1",
+      cluster_incremental_sync = inc_sync,
+    }))
+  end)
+
+  lazy_teardown(function()
+    helpers.stop_kong("servroot2")
+    helpers.stop_kong()
+  end)
+
+  describe("status API", function()
+    it("shows DP cert details", function()
+      helpers.wait_until(function()
+        local admin_client = helpers.admin_client()
+        finally(function()
+          admin_client:close()
+        end)
+
+        local res = assert(admin_client:get("/clustering/data-planes"))
+        local body = assert.res_status(200, res)
+        local json = cjson.decode(body)
+
+        for _, v in pairs(json.data) do
+          if v.ip == "127.0.0.1" then
+            assert.equal(1888983905, v.cert_details.expiry_timestamp)
+            return true
+          end
+        end
+      end, 3)
+    end)
+  end)
+end)
+
+describe("CP/DP cert details(cluster_mtls = pki) #" .. strategy, function()
+  lazy_setup(function()
+    helpers.get_db_utils(strategy) -- runs migrations
+
+    assert(helpers.start_kong({
+      role = "control_plane",
+      cluster_cert = "spec/fixtures/kong_clustering.crt",
+      cluster_cert_key = "spec/fixtures/kong_clustering.key",
+      db_update_frequency = 0.1,
+      database = strategy,
+      cluster_listen = "127.0.0.1:9005",
+      nginx_conf = "spec/fixtures/custom_nginx.template",
+      -- additional attributes for PKI:
+      cluster_mtls = "pki",
+      cluster_ca_cert = "spec/fixtures/kong_clustering_ca.crt",
+      cluster_incremental_sync = inc_sync,
+    }))
+
+    assert(helpers.start_kong({
+      role = "data_plane",
+      nginx_conf = "spec/fixtures/custom_nginx.template",
+      database = "off",
+      prefix = "servroot2",
+      cluster_cert = "spec/fixtures/kong_clustering_client.crt",
+      cluster_cert_key = "spec/fixtures/kong_clustering_client.key",
+      cluster_control_plane = "127.0.0.1:9005",
+      proxy_listen = "0.0.0.0:9002",
+      -- additional attributes for PKI:
+      cluster_mtls = "pki",
+      cluster_server_name = "kong_clustering",
+      cluster_ca_cert = "spec/fixtures/kong_clustering.crt",
+      cluster_incremental_sync = inc_sync,
+    }))
+  end)
+
+  lazy_teardown(function()
+    helpers.stop_kong("servroot2")
+    helpers.stop_kong()
+  end)
+
+  describe("status API", function()
+    it("shows DP cert details", function()
+      helpers.wait_until(function()
+        local admin_client = helpers.admin_client()
+        finally(function()
+          admin_client:close()
+        end)
+
+        local res = admin_client:get("/clustering/data-planes")
+        local body = assert.res_status(200, res)
+        local json = cjson.decode(body)
+
+        for _, v in pairs(json.data) do
+          if v.ip == "127.0.0.1" then
+            assert.equal(1897136778, v.cert_details.expiry_timestamp)
+            return true
+          end
+        end
+      end, 3)
+    end)
+  end)
+end)
+
+end -- for _, strategy
+end -- for inc_sync

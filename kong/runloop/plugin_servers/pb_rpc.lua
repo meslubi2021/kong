@@ -183,7 +183,7 @@ local function index_table(table, field)
   end
 
   local res = table
-  for segment, e in ngx.re.gmatch(field, "\\w+", "o") do
+  for segment, e in ngx.re.gmatch(field, "\\w+", "jo") do
     if res[segment[0]] then
       res = res[segment[0]]
     else
@@ -371,6 +371,9 @@ function Rpc:call_start_instance(plugin_name, conf)
     return nil, err
   end
 
+  kong.log.debug("started plugin server: seq ", conf.__seq__, ", worker ", ngx.worker.id() or -1, ", instance id ",
+    status.instance_status.instance_id)
+
   return {
     id = status.instance_status.instance_id,
     conf = conf,
@@ -389,8 +392,8 @@ end
 
 
 function Rpc:handle_event(plugin_name, conf, phase)
-  local instance_id, res, err
-  instance_id, err = self.get_instance_id(plugin_name, conf)
+  local instance_id, err = self.get_instance_id(plugin_name, conf)
+  local res
   if not err then
     res, err = self:call("cmd_handle_event", {
       instance_id = instance_id,
@@ -399,19 +402,18 @@ function Rpc:handle_event(plugin_name, conf, phase)
   end
 
   if not res or res == "" then
-    local ok, err2 = kong.worker_events.post("plugin_server", "reset_instances",
-    { plugin_name = plugin_name, conf = conf })
-    if not ok then
-      kong.log.err("failed to post plugin_server reset_instances event: ", err2)
-    end
+    local err_lowered = err and err:lower() or "unknown error"
 
-    local err_lowered = err and err:lower() or ""
-    if str_find(err_lowered, "no plugin instance")
-      or str_find(err_lowered, "closed")  then
+    if str_find(err_lowered, "no plugin instance", nil, true)
+      or str_find(err_lowered, "closed", nil, true) then
+      self.reset_instance(plugin_name, conf)
       kong.log.warn(err)
       return self:handle_event(plugin_name, conf, phase)
+
+    else
+      kong.log.err("pluginserver error: ", err or "unknown error")
+      kong.response.error(500)
     end
-    kong.log.err(err)
   end
 end
 

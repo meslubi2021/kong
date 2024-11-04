@@ -4,7 +4,7 @@ local cjson = require "cjson"
 -- We already test the functionality of page() when filtering by tag in
 -- spec/02-integration/03-db/07-tags_spec.lua.
 -- This test we test on the correctness of the admin API response so that
--- we can ensure the the right function (page()) is executed.
+-- we can ensure the right function (page()) is executed.
 describe("Admin API - tags", function()
   for _, strategy in helpers.each_strategy() do
     describe("/entities?tags= with DB: #" .. strategy, function()
@@ -71,6 +71,26 @@ describe("Admin API - tags", function()
         for i = 1, 2 do
           assert.contains("🦍", json.data[i].tags)
         end
+      end)
+
+      it("filter by empty tag", function()
+        local res = assert(client:send {
+          method = "GET",
+          path = "/consumers?tags="
+        })
+        local body = assert.res_status(400, res)
+        local json = cjson.decode(body)
+        assert.same("invalid option (tags: cannot be null)", json.message)
+      end)
+
+      it("filter by empty string tag", function()
+        local res = assert(client:send {
+          method = "GET",
+          path = "/consumers?tags=''"
+        })
+        local body = assert.res_status(200, res)
+        local json = cjson.decode(body)
+        assert.equals(0, #json.data)
       end)
 
       it("filter by multiple tags with AND", function()

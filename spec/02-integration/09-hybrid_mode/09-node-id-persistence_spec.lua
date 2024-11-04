@@ -1,7 +1,6 @@
 local helpers = require "spec.helpers"
-local utils = require "kong.tools.utils"
 
-local is_valid_uuid = utils.is_valid_uuid
+local is_valid_uuid = require("kong.tools.uuid").is_valid_uuid
 
 local PREFIX = "servroot.dp"
 local NODE_ID = PREFIX .. "/kong.id"
@@ -84,8 +83,10 @@ local function start_kong_debug(env)
 end
 
 
+--- XXX FIXME: enable inc_sync = on
+for _, inc_sync in ipairs { "off" } do
 for _, strategy in helpers.each_strategy() do
-  describe("node id persistence", function()
+  describe("node id persistence " .. " inc_sync=" .. inc_sync, function()
 
     local control_plane_config = {
       role = "control_plane",
@@ -94,6 +95,7 @@ for _, strategy in helpers.each_strategy() do
       cluster_cert_key = "spec/fixtures/kong_clustering.key",
       cluster_listen = "127.0.0.1:9005",
       nginx_conf = "spec/fixtures/custom_nginx.template",
+      cluster_incremental_sync = inc_sync,
     }
 
     local data_plane_config = {
@@ -108,6 +110,7 @@ for _, strategy in helpers.each_strategy() do
       database = "off",
       untrusted_lua = "on",
       nginx_conf = "spec/fixtures/custom_nginx.template",
+      cluster_incremental_sync = inc_sync,
     }
 
     local admin_client
@@ -323,4 +326,5 @@ for _, strategy in helpers.each_strategy() do
     end)
 
   end)
-end
+end -- for _, strategy
+end -- for inc_sync

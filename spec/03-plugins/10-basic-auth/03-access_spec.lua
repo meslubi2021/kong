@@ -1,7 +1,6 @@
 local helpers = require "spec.helpers"
 local cjson   = require "cjson"
-local meta    = require "kong.meta"
-local utils   = require "kong.tools.utils"
+local uuid    = require "kong.tools.uuid"
 
 
 for _, strategy in helpers.each_strategy() do
@@ -26,23 +25,23 @@ for _, strategy in helpers.each_strategy() do
       }
 
       local route1 = bp.routes:insert {
-        hosts = { "basic-auth1.com" },
+        hosts = { "basic-auth1.test" },
       }
 
       local route2 = bp.routes:insert {
-        hosts = { "basic-auth2.com" },
+        hosts = { "basic-auth2.test" },
       }
 
       local route3 = bp.routes:insert {
-        hosts = { "basic-auth3.com" },
+        hosts = { "basic-auth3.test" },
       }
 
       local route4 = bp.routes:insert {
-        hosts = { "basic-auth4.com" },
+        hosts = { "basic-auth4.test" },
       }
 
       local route5 = bp.routes:insert {
-        hosts = { "basic-auth5.com" },
+        hosts = { "basic-auth5.test" },
       }
 
       local route_grpc = assert(bp.routes:insert {
@@ -57,6 +56,9 @@ for _, strategy in helpers.each_strategy() do
       bp.plugins:insert {
         name     = "basic-auth",
         route = { id = route1.id },
+        config = {
+          realm = "test-realm",
+        }
       }
 
       bp.plugins:insert {
@@ -102,7 +104,7 @@ for _, strategy in helpers.each_strategy() do
         name     = "basic-auth",
         route = { id = route4.id },
         config   = {
-          anonymous = utils.uuid(), -- a non-existing consumer id
+          anonymous = uuid.uuid(), -- a non-existing consumer id
         },
       }
 
@@ -132,33 +134,39 @@ for _, strategy in helpers.each_strategy() do
     end)
 
     describe("Unauthorized", function()
-
-      it("returns Unauthorized on missing credentials", function()
-        local res = assert(proxy_client:send {
-          method  = "GET",
-          path    = "/status/200",
-          headers = {
-            ["Host"] = "basic-auth1.com"
-          }
-        })
-        local body = assert.res_status(401, res)
-        local json = cjson.decode(body)
-        assert.not_nil(json)
-        assert.matches("Unauthorized", json.message)
+      describe("when realm is configured", function()
+        it("returns Unauthorized on missing credentials", function()
+          local res = assert(proxy_client:send {
+            method  = "GET",
+            path    = "/status/200",
+            headers = {
+              ["Host"] = "basic-auth1.test"
+            }
+          })
+          local body = assert.res_status(401, res)
+          local json = cjson.decode(body)
+          assert.not_nil(json)
+          assert.matches("Unauthorized", json.message)
+          assert.equal('Basic realm="test-realm"', res.headers["WWW-Authenticate"])
+        end)
       end)
 
-      it("returns WWW-Authenticate header on missing credentials", function()
-        local res = assert(proxy_client:send {
-          method  = "GET",
-          path    = "/status/200",
-          headers = {
-            ["Host"] = "basic-auth1.com"
-          }
-        })
-        assert.res_status(401, res)
-        assert.equal('Basic realm="' .. meta._NAME .. '"', res.headers["WWW-Authenticate"])
+      describe("when realm is default", function()
+        it("returns Unauthorized on missing credentials", function()
+          local res = assert(proxy_client:send {
+            method  = "GET",
+            path    = "/status/200",
+            headers = {
+              ["Host"] = "basic-auth2.test"
+            }
+          })
+          local body = assert.res_status(401, res)
+          local json = cjson.decode(body)
+          assert.not_nil(json)
+          assert.matches("Unauthorized", json.message)
+          assert.equal('Basic realm="service"', res.headers["WWW-Authenticate"])
+        end)
       end)
-
     end)
 
     describe("Unauthorized", function()
@@ -169,13 +177,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/status/200",
           headers = {
             ["Authorization"] = "foobar",
-            ["Host"]          = "basic-auth1.com"
+            ["Host"]          = "basic-auth1.test"
           }
         })
         local body = assert.res_status(401, res)
         local json = cjson.decode(body)
         assert.not_nil(json)
-        assert.matches("Invalid authentication credentials", json.message)
+        assert.matches("Unauthorized", json.message)
+        assert.equal('Basic realm="test-realm"', res.headers["WWW-Authenticate"])
       end)
 
       it("returns 401 Unauthorized on invalid credentials in Proxy-Authorization", function()
@@ -184,13 +193,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/status/200",
           headers = {
             ["Proxy-Authorization"] = "foobar",
-            ["Host"]                = "basic-auth1.com"
+            ["Host"]                = "basic-auth1.test"
           }
         })
         local body = assert.res_status(401, res)
         local json = cjson.decode(body)
         assert.not_nil(json)
-        assert.matches("Invalid authentication credentials", json.message)
+        assert.matches("Unauthorized", json.message)
+        assert.equal('Basic realm="test-realm"', res.headers["WWW-Authenticate"])
       end)
 
       it("returns 401 Unauthorized on password only", function()
@@ -199,13 +209,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/status/200",
           headers = {
             ["Authorization"] = "Basic a29uZw==",
-            ["Host"]          = "basic-auth1.com"
+            ["Host"]          = "basic-auth1.test"
           }
         })
         local body = assert.res_status(401, res)
         local json = cjson.decode(body)
         assert.not_nil(json)
-        assert.matches("Invalid authentication credentials", json.message)
+        assert.matches("Unauthorized", json.message)
+        assert.equal('Basic realm="test-realm"', res.headers["WWW-Authenticate"])
       end)
 
       it("returns 401 Unauthorized on username only", function()
@@ -214,13 +225,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/status/200",
           headers = {
             ["Authorization"] = "Basic Ym9i",
-            ["Host"]          = "basic-auth1.com"
+            ["Host"]          = "basic-auth1.test"
           }
         })
         local body = assert.res_status(401, res)
         local json = cjson.decode(body)
         assert.not_nil(json)
-        assert.matches("Invalid authentication credentials", json.message)
+        assert.matches("Unauthorized", json.message)
+        assert.equal('Basic realm="test-realm"', res.headers["WWW-Authenticate"])
       end)
 
       it("rejects gRPC call without credentials", function()
@@ -249,7 +261,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/status/200",
           headers = {
             ["Authorization"] = "Basic Ym9iOmtvbmc=",
-            ["Host"]          = "basic-auth1.com"
+            ["Host"]          = "basic-auth1.test"
           }
         })
         assert.res_status(200, res)
@@ -261,7 +273,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           headers = {
             ["Authorization"] = "Basic dXNlcjEyMzpwYXNzd29yZDEyMw==",
-            ["Host"]          = "basic-auth1.com"
+            ["Host"]          = "basic-auth1.test"
           }
         })
         local body = cjson.decode(assert.res_status(200, res))
@@ -275,7 +287,7 @@ for _, strategy in helpers.each_strategy() do
           path = "/request",
           headers = {
             ["Authorization"] = "Basic dXNlcjMyMTpwYXNzd29yZDoxMjM=",
-            ["Host"] = "basic-auth1.com"
+            ["Host"] = "basic-auth1.test"
           }
         })
         local body = cjson.decode(assert.res_status(200, res))
@@ -289,13 +301,14 @@ for _, strategy in helpers.each_strategy() do
           path    = "/status/200",
           headers = {
             ["Authorization"] = "Basic adXNlcjEyMzpwYXNzd29yZDEyMw==",
-            ["Host"]          = "basic-auth1.com"
+            ["Host"]          = "basic-auth1.test"
           }
         })
         local body = assert.res_status(401, res)
         local json = cjson.decode(body)
         assert.not_nil(json)
-        assert.matches("Invalid authentication credentials", json.message)
+        assert.matches("Unauthorized", json.message)
+        assert.equal('Basic realm="test-realm"', res.headers["WWW-Authenticate"])
       end)
 
       it("authenticates valid credentials in Proxy-Authorization", function()
@@ -304,7 +317,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/status/200",
           headers = {
             ["Proxy-Authorization"] = "Basic Ym9iOmtvbmc=",
-            ["Host"]                = "basic-auth1.com"
+            ["Host"]                = "basic-auth1.test"
           }
         })
         assert.res_status(200, res)
@@ -320,7 +333,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           headers = {
             ["Authorization"] = "Basic Ym9iOmtvbmc=",
-            ["Host"]          = "basic-auth1.com"
+            ["Host"]          = "basic-auth1.test"
           }
         })
         local body = assert.res_status(200, res)
@@ -340,7 +353,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           headers = {
             ["Authorization"] = "Basic Ym9iOmtvbmc=",
-            ["Host"]          = "basic-auth1.com"
+            ["Host"]          = "basic-auth1.test"
           }
         })
         local body = assert.res_status(200, res)
@@ -354,7 +367,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           headers = {
             ["Authorization"] = "Basic Ym9iOmtvbmc=",
-            ["Host"]          = "basic-auth2.com"
+            ["Host"]          = "basic-auth2.test"
           }
         })
         local body = assert.res_status(200, res)
@@ -373,7 +386,7 @@ for _, strategy in helpers.each_strategy() do
           path    = "/request",
           headers = {
             ["Authorization"] = "Basic dXNlcjEyMzpwYXNzd29yZDEyMw==",
-            ["Host"]          = "basic-auth3.com"
+            ["Host"]          = "basic-auth3.test"
           }
         })
         local body = cjson.decode(assert.res_status(200, res))
@@ -387,7 +400,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"] = "basic-auth3.com"
+            ["Host"] = "basic-auth3.test"
           }
         })
         local body = cjson.decode(assert.res_status(200, res))
@@ -401,7 +414,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"] = "basic-auth5.com"
+            ["Host"] = "basic-auth5.test"
           }
         })
         local body = cjson.decode(assert.res_status(200, res))
@@ -414,7 +427,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"] = "basic-auth4.com"
+            ["Host"] = "basic-auth4.test"
           }
         })
         assert.response(res).has.status(500)
@@ -461,12 +474,12 @@ for _, strategy in helpers.each_strategy() do
       }
 
       local route1 = bp.routes:insert {
-        hosts   = { "logical-and.com" },
+        hosts   = { "logical-and.test" },
         service = service1,
       }
 
       local route2 = bp.routes:insert {
-        hosts   = { "logical-or.com" },
+        hosts   = { "logical-or.test" },
         service = service2,
       }
 
@@ -530,7 +543,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]          = "logical-and.com",
+            ["Host"]          = "logical-and.test",
             ["apikey"]        = "Mouse",
             ["Authorization"] = "Basic QWxhZGRpbjpPcGVuU2VzYW1l",
           }
@@ -547,7 +560,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]   = "logical-and.com",
+            ["Host"]   = "logical-and.test",
             ["apikey"] = "Mouse",
           }
         })
@@ -559,11 +572,12 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]          = "logical-and.com",
+            ["Host"]          = "logical-and.test",
             ["Authorization"] = "Basic QWxhZGRpbjpPcGVuU2VzYW1l",
           }
         })
         assert.response(res).has.status(401)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
 
       it("fails 401, with no credential provided", function()
@@ -571,10 +585,11 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"] = "logical-and.com",
+            ["Host"] = "logical-and.test",
           }
         })
         assert.response(res).has.status(401)
+        assert.equal('Key', res.headers["WWW-Authenticate"])
       end)
 
     end)
@@ -586,7 +601,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]          = "logical-or.com",
+            ["Host"]          = "logical-or.test",
             ["apikey"]        = "Mouse",
             ["Authorization"] = "Basic QWxhZGRpbjpPcGVuU2VzYW1l",
           }
@@ -603,7 +618,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]   = "logical-or.com",
+            ["Host"]   = "logical-or.test",
             ["apikey"] = "Mouse",
           }
         })
@@ -619,7 +634,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"]          = "logical-or.com",
+            ["Host"]          = "logical-or.test",
             ["Authorization"] = "Basic QWxhZGRpbjpPcGVuU2VzYW1l",
           }
         })
@@ -635,7 +650,7 @@ for _, strategy in helpers.each_strategy() do
           method  = "GET",
           path    = "/request",
           headers = {
-            ["Host"] = "logical-or.com",
+            ["Host"] = "logical-or.test",
           }
         })
         assert.response(res).has.status(200)
@@ -671,7 +686,7 @@ for _, strategy in helpers.each_strategy() do
       }
 
       local route = bp.routes:insert {
-        hosts   = { "anonymous-with-username.com" },
+        hosts   = { "anonymous-with-username.test" },
         service = service,
       }
 
@@ -708,7 +723,7 @@ for _, strategy in helpers.each_strategy() do
         method = "GET",
         path = "/request",
         headers = {
-          ["Host"] = "anonymous-with-username.com",
+          ["Host"] = "anonymous-with-username.test",
         },
       })
       assert.response(res).has.status(200)
@@ -729,7 +744,7 @@ for _, strategy in helpers.each_strategy() do
         method = "GET",
         path = "/request",
         headers = {
-          ["Host"] = "anonymous-with-username.com",
+          ["Host"] = "anonymous-with-username.test",
         }
       })
       assert.res_status(500, res)
